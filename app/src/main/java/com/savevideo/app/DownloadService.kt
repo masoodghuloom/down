@@ -87,7 +87,15 @@ class DownloadService : Service() {
     private fun produceVideo(url: String, notifId: Int): File {
         val dir = File(cacheDir, "dl/$notifId").apply { deleteRecursively(); mkdirs() }
 
-        // 1) Normal video (TikTok video, Reel, YouTube, Shorts…)
+        // TikTok (video or photo) goes through the tikwm resolver, because the
+        // yt-dlp engine can't handle TikTok reliably any more.
+        if (TikTokApi.isTikTok(url)) {
+            try {
+                return downloadTikTok(url, dir, notifId)
+            } catch (_: Throwable) { }
+        }
+
+        // 1) Normal video (Reel, YouTube, Shorts…)
         try {
             return downloadVideo(url, dir, notifId)
         } catch (_: Throwable) { }
@@ -108,6 +116,41 @@ class DownloadService : Service() {
         } catch (_: Throwable) { }
 
         return buildFromPhotoPost(url, dir, notifId) // last attempt; let it throw
+    }
+
+    /** Resolve and download a TikTok link (video or photo post) via tikwm. */
+    private fun downloadTikTok(url: String, dir: File, notifId: Int): File {
+        progress(notifId, "Fetching from TikTok…", -1)
+        val media = TikTokApi.fetch(url) ?: throw IllegalStateException("TikTok lookup failed")
+
+        // Photo / slideshow post -> images + music stitched into a video
+        if (media.images.isNotEmpty()) {
+            progress(notifId, "Downloading ${media.images.size} image(s) & sound…", -1)
+            val images = mutableListOf<File>()
+            media.images.forEachIndexed { i, imgUrl ->
+                val f = File(dir, "img_%03d.jpg".format(i + 1))
+                if (Http.download(imgUrl, f)) images.add(f)
+            }
+            if (images.isEmpty()) throw IllegalStateException("Could not download the images")
+
+            val audio = media.audio?.let { a ->
+                File(dir, "audio.m4a").takeIf { Http.download(a, it) }
+            }
+
+            progress(notifId, "Building video with sound…", -1)
+            val out = File(dir, "slideshow.mp4")
+            if (!SlideshowBuilder.build(images, audio, out)) {
+                throw IllegalStateException("Could not build the slideshow video")
+            }
+            return out
+        }
+
+        // Normal video (no watermark)
+        val videoUrl = media.video ?: throw IllegalStateException("No media found in this post")
+        progress(notifId, "Downloading video…", -1)
+        val out = File(dir, "video.mp4")
+        if (!Http.download(videoUrl, out)) throw IllegalStateException("Could not download the video")
+        return out
     }
 
     private fun downloadVideo(url: String, dir: File, notifId: Int): File {
