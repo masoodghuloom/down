@@ -18,9 +18,10 @@ object SlideshowBuilder {
         if (images.isEmpty()) return false
         val dir = outFile.parentFile ?: return false
 
+        // Spread the whole audio across the images (one image => full song length).
         val audioDuration = audio?.let { probeDurationSeconds(it) } ?: 0.0
         val perImage =
-            if (audioDuration > 0.5) (audioDuration / images.size).coerceIn(0.8, 8.0) else 3.0
+            if (audioDuration > 0.5) (audioDuration / images.size).coerceAtLeast(0.5) else 3.0
 
         // Build a concat-demuxer list. The last image is repeated so its
         // duration is honoured (a quirk of the concat demuxer).

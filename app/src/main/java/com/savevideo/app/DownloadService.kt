@@ -22,6 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.Locale
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -88,11 +89,15 @@ class DownloadService : Service() {
         val dir = File(cacheDir, "dl/$notifId").apply { deleteRecursively(); mkdirs() }
 
         // TikTok (video or photo) goes through the tikwm resolver, because the
-        // yt-dlp engine can't handle TikTok reliably any more.
+        // yt-dlp engine can't handle TikTok reliably any more. If the resolver
+        // itself is unreachable we fall through to yt-dlp as a backup; but once
+        // it returns media we commit to it, so failures report the real reason.
         if (TikTokApi.isTikTok(url)) {
-            try {
-                return downloadTikTok(url, dir, notifId)
-            } catch (_: Throwable) { }
+            progress(notifId, "Fetching from TikTok…", -1)
+            val media = TikTokApi.fetch(url)
+            if (media != null) {
+                return buildTikTok(media, dir, notifId)
+            }
         }
 
         // 1) Normal video (Reel, YouTube, Shorts…)
@@ -118,11 +123,8 @@ class DownloadService : Service() {
         return buildFromPhotoPost(url, dir, notifId) // last attempt; let it throw
     }
 
-    /** Resolve and download a TikTok link (video or photo post) via tikwm. */
-    private fun downloadTikTok(url: String, dir: File, notifId: Int): File {
-        progress(notifId, "Fetching from TikTok…", -1)
-        val media = TikTokApi.fetch(url) ?: throw IllegalStateException("TikTok lookup failed")
-
+    /** Build the final video from already-resolved TikTok media (video or photo). */
+    private fun buildTikTok(media: TikTokApi.Media, dir: File, notifId: Int): File {
         // Photo / slideshow post -> images + music stitched into a video
         if (media.images.isNotEmpty()) {
             progress(notifId, "Downloading ${media.images.size} image(s) & sound…", -1)
@@ -249,14 +251,16 @@ class DownloadService : Service() {
     // ----- Save to the gallery ---------------------------------------------
 
     private fun saveToGallery(file: File) {
-        val name = ensureMp4Name(file.name)
+        val name = uniqueName(file.name)
         val mime = "video/mp4"
+        // DCIM is the folder Samsung Gallery reliably scans (Movies/ often isn't shown).
+        val album = "${Environment.DIRECTORY_DCIM}/SaveVideo"
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val values = ContentValues().apply {
                 put(MediaStore.Video.Media.DISPLAY_NAME, name)
                 put(MediaStore.Video.Media.MIME_TYPE, mime)
-                put(MediaStore.Video.Media.RELATIVE_PATH, "${Environment.DIRECTORY_MOVIES}/SaveVideo")
+                put(MediaStore.Video.Media.RELATIVE_PATH, album)
                 put(MediaStore.Video.Media.IS_PENDING, 1)
             }
             val uri: Uri = contentResolver.insert(
@@ -271,7 +275,7 @@ class DownloadService : Service() {
             contentResolver.update(uri, values, null, null)
         } else {
             val outDir = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
                 "SaveVideo"
             ).apply { mkdirs() }
             val dest = File(outDir, name)
@@ -280,9 +284,15 @@ class DownloadService : Service() {
         }
     }
 
-    private fun ensureMp4Name(name: String): String =
-        if (name.substringAfterLast('.', "").lowercase() in VIDEO_EXT) name
-        else name.substringBeforeLast('.', name) + ".mp4"
+    /** A collision-proof, gallery-friendly file name ending in .mp4. */
+    private fun uniqueName(original: String): String {
+        val base = original.substringBeforeLast('.', original)
+            .replace(Regex("[^A-Za-z0-9_-]"), "_")
+            .take(40)
+            .ifBlank { "video" }
+        val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date())
+        return "SaveVideo_${stamp}_$base.mp4"
+    }
 
     // ----- Notifications ----------------------------------------------------
 
