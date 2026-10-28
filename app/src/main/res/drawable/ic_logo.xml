@@ -1,0 +1,32 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="96dp"
+    android:height="96dp"
+    android:viewportWidth="96"
+    android:viewportHeight="96">
+
+    <!-- metallic lens barrel -->
+    <path android:fillColor="#3A3F47"
+        android:pathData="M2,48 a46,46 0 1,0 92,0 a46,46 0 1,0 -92,0 Z" />
+    <path android:fillColor="#8A929C"
+        android:pathData="M6,48 a42,42 0 1,0 84,0 a42,42 0 1,0 -84,0 Z" />
+    <path android:fillColor="#4A4F57"
+        android:pathData="M14,48 a34,34 0 1,0 68,0 a34,34 0 1,0 -68,0 Z" />
+    <path android:fillColor="#15181C"
+        android:pathData="M22,48 a26,26 0 1,0 52,0 a26,26 0 1,0 -52,0 Z" />
+
+    <!-- glowing blue iris -->
+    <path android:pathData="M28,48 a20,20 0 1,0 40,0 a20,20 0 1,0 -40,0 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial"
+                android:centerX="48" android:centerY="48" android:gradientRadius="20"
+                android:startColor="#9FE0FF" android:endColor="#0B3A66" />
+        </aapt:attr>
+    </path>
+
+    <!-- highlights -->
+    <path android:fillColor="#FFFFFF" android:fillAlpha="0.9"
+        android:pathData="M42,48 a6,6 0 1,0 12,0 a6,6 0 1,0 -12,0 Z" />
+    <path android:fillColor="#FFFFFF" android:fillAlpha="0.65"
+        android:pathData="M39,41 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0 Z" />
+</vector>

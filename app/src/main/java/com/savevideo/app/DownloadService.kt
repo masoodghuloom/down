@@ -25,9 +25,10 @@ import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
- * Foreground service that downloads a single video with yt-dlp and copies the
- * result into the phone's gallery (Movies/SaveVideo). Each shared link starts
- * one job; several can run at once.
+ * Foreground service that saves a shared link to the gallery. It first tries a
+ * normal video download; if that yields nothing (a TikTok / Instagram photo
+ * "slideshow" post), it downloads the images + music and stitches them into one
+ * MP4 with the full sound.
  */
 class DownloadService : Service() {
 
@@ -42,6 +43,9 @@ class DownloadService : Service() {
         private const val FG_ID = 1
         private var initialized = false
         private val initLock = Any()
+
+        private val IMAGE_EXT = setOf("jpg", "jpeg", "png", "webp", "heic", "heif")
+        private val VIDEO_EXT = setOf("mp4", "mkv", "webm", "mov")
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -62,13 +66,13 @@ class DownloadService : Service() {
         scope.launch {
             try {
                 ensureEngineReady()
-                val file = runWithRetry(url, notifId)
+                val file = produceVideo(url, notifId)
                 progress(notifId, "Saving to gallery…", -1)
                 saveToGallery(file)
                 file.parentFile?.deleteRecursively()
-                done(notifId, "Saved to your gallery ✓", url)
+                done(notifId, "Saved to your gallery ✓")
             } catch (e: Throwable) {
-                done(notifId, friendlyError(e), url)
+                done(notifId, friendlyError(e))
             } finally {
                 active.decrementAndGet()
                 finishIfIdle(startId)
@@ -77,7 +81,117 @@ class DownloadService : Service() {
         return START_NOT_STICKY
     }
 
-    // ----- yt-dlp -----------------------------------------------------------
+    // ----- Download orchestration ------------------------------------------
+
+    /** Returns a playable video file, from either a normal post or a photo post. */
+    private fun produceVideo(url: String, notifId: Int): File {
+        val dir = File(cacheDir, "dl/$notifId").apply { deleteRecursively(); mkdirs() }
+
+        // 1) Normal video (TikTok video, Reel, YouTube, Shorts…)
+        try {
+            return downloadVideo(url, dir, notifId)
+        } catch (_: Throwable) { }
+
+        // 2) Photo / slideshow post -> build a video from images + music
+        try {
+            return buildFromPhotoPost(url, dir, notifId)
+        } catch (_: Throwable) { }
+
+        // 3) Engine may be stale (sites change); refresh once and retry both
+        try {
+            progress(notifId, "Updating downloader…", -1)
+            YoutubeDL.getInstance().updateYoutubeDL(this)
+        } catch (_: Throwable) { }
+
+        try {
+            return downloadVideo(url, dir, notifId)
+        } catch (_: Throwable) { }
+
+        return buildFromPhotoPost(url, dir, notifId) // last attempt; let it throw
+    }
+
+    private fun downloadVideo(url: String, dir: File, notifId: Int): File {
+        val request = YoutubeDLRequest(url).apply {
+            addOption("--no-mtime")
+            addOption("--no-playlist")
+            addOption("--no-warnings")
+            addOption("--restrict-filenames")
+            addOption("-f", "bv*+ba/b")
+            addOption("--merge-output-format", "mp4")
+            addOption("-o", File(dir, "%(title).60s.%(ext)s").absolutePath)
+        }
+
+        progress(notifId, "Fetching video…", 0)
+        YoutubeDL.getInstance().execute(request) { pct, _, _ ->
+            progress(notifId, "Downloading… ${pct.toInt().coerceIn(0, 100)}%", pct.toInt())
+        }
+
+        return dir.listFiles()
+            ?.firstOrNull { it.isFile && it.extension.lowercase() in VIDEO_EXT }
+            ?: throw IllegalStateException("No video stream")
+    }
+
+    private fun buildFromPhotoPost(url: String, dir: File, notifId: Int): File {
+        progress(notifId, "Photo post — getting images & sound…", -1)
+
+        // Slideshow images (each slide is a playlist entry)
+        runQuietly {
+            val req = YoutubeDLRequest(url).apply {
+                addOption("--yes-playlist")
+                addOption("--no-warnings")
+                addOption("-o", File(dir, "img_%(autonumber)03d.%(ext)s").absolutePath)
+            }
+            YoutubeDL.getInstance().execute(req)
+        }
+
+        // Cover image fallback (covers the "single image + sound" case)
+        runQuietly {
+            val req = YoutubeDLRequest(url).apply {
+                addOption("--skip-download")
+                addOption("--write-thumbnail")
+                addOption("--no-warnings")
+                addOption("--convert-thumbnails", "jpg")
+                addOption("-o", File(dir, "cover").absolutePath)
+            }
+            YoutubeDL.getInstance().execute(req)
+        }
+
+        // The background music
+        runQuietly {
+            val req = YoutubeDLRequest(url).apply {
+                addOption("--no-playlist")
+                addOption("--no-warnings")
+                addOption("-f", "bestaudio/audio/ba")
+                addOption("-o", File(dir, "audio.%(ext)s").absolutePath)
+            }
+            YoutubeDL.getInstance().execute(req)
+        }
+
+        val all = dir.listFiles()?.filter { it.isFile } ?: emptyList()
+        var images = all.filter { it.name.startsWith("img_") && it.extension.lowercase() in IMAGE_EXT }
+            .sortedBy { it.name }
+        if (images.isEmpty()) {
+            images = all.filter { it.name.startsWith("cover") && it.extension.lowercase() in IMAGE_EXT }
+        }
+        if (images.isEmpty()) throw IllegalStateException("No images found in this post")
+
+        val audio = all.firstOrNull {
+            it.name.startsWith("audio.") && it.extension.lowercase() !in IMAGE_EXT
+        }
+
+        progress(notifId, "Building video with sound…", -1)
+        val out = File(dir, "slideshow.mp4")
+        if (!SlideshowBuilder.build(images, audio, out)) {
+            throw IllegalStateException("Could not build the slideshow video")
+        }
+        return out
+    }
+
+    private inline fun runQuietly(block: () -> Unit) = try {
+        block()
+    } catch (_: Throwable) { }
+
+    // ----- Engine init ------------------------------------------------------
 
     private fun ensureEngineReady() {
         synchronized(initLock) {
@@ -89,53 +203,11 @@ class DownloadService : Service() {
         }
     }
 
-    /** Download once; if it fails, refresh yt-dlp (sites change often) and try again. */
-    private fun runWithRetry(url: String, notifId: Int): File {
-        return try {
-            download(url, notifId)
-        } catch (first: Throwable) {
-            try {
-                progress(notifId, "Updating downloader…", -1)
-                YoutubeDL.getInstance().updateYoutubeDL(this)
-            } catch (_: Throwable) { /* keep going with what we have */ }
-            download(url, notifId)
-        }
-    }
-
-    private fun download(url: String, notifId: Int): File {
-        val jobDir = File(cacheDir, "dl/$notifId").apply {
-            deleteRecursively(); mkdirs()
-        }
-
-        val request = YoutubeDLRequest(url).apply {
-            addOption("--no-mtime")
-            addOption("--no-playlist")
-            addOption("--restrict-filenames")
-            addOption("-f", "bv*+ba/b")
-            addOption("--merge-output-format", "mp4")
-            addOption("-o", File(jobDir, "%(title).60s.%(ext)s").absolutePath)
-        }
-
-        progress(notifId, "Fetching video…", 0)
-        YoutubeDL.getInstance().execute(request) { pct, _, _ ->
-            progress(notifId, "Downloading… ${pct.toInt().coerceIn(0, 100)}%", pct.toInt())
-        }
-
-        val files = jobDir.listFiles()?.filter { it.isFile && !it.name.endsWith(".part") }
-        return files?.firstOrNull { it.extension.equals("mp4", true) }
-            ?: files?.maxByOrNull { it.length() }
-            ?: throw IllegalStateException("Nothing was downloaded")
-    }
-
     // ----- Save to the gallery ---------------------------------------------
 
     private fun saveToGallery(file: File) {
-        val name = file.name
-        val mime = when (file.extension.lowercase()) {
-            "webm" -> "video/webm"
-            "mkv" -> "video/x-matroska"
-            else -> "video/mp4"
-        }
+        val name = ensureMp4Name(file.name)
+        val mime = "video/mp4"
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             val values = ContentValues().apply {
@@ -155,15 +227,19 @@ class DownloadService : Service() {
             values.put(MediaStore.Video.Media.IS_PENDING, 0)
             contentResolver.update(uri, values, null, null)
         } else {
-            val dir = File(
+            val outDir = File(
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
                 "SaveVideo"
             ).apply { mkdirs() }
-            val dest = File(dir, name)
+            val dest = File(outDir, name)
             file.copyTo(dest, overwrite = true)
             MediaScannerConnection.scanFile(this, arrayOf(dest.absolutePath), arrayOf(mime), null)
         }
     }
+
+    private fun ensureMp4Name(name: String): String =
+        if (name.substringAfterLast('.', "").lowercase() in VIDEO_EXT) name
+        else name.substringBeforeLast('.', name) + ".mp4"
 
     // ----- Notifications ----------------------------------------------------
 
@@ -198,7 +274,7 @@ class DownloadService : Service() {
         nm.notify(id, b.build())
     }
 
-    private fun done(id: Int, text: String, url: String) {
+    private fun done(id: Int, text: String) {
         val notif = NotificationCompat.Builder(this, DONE_CHANNEL)
             .setContentTitle("Save Video")
             .setContentText(text)
@@ -231,14 +307,9 @@ class DownloadService : Service() {
         val msg = e.message ?: "unknown error"
         return when {
             msg.contains("login", true) || msg.contains("private", true) ->
-                "Couldn't download — this video may be private or need a login."
-            msg.contains("Unsupported URL", true) ->
-                "That link isn't supported."
+                "Couldn't download — this post may be private or need a login."
+            msg.contains("Unsupported URL", true) -> "That link isn't supported."
             else -> "Couldn't download: ${msg.take(120)}"
         }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
     }
 }
