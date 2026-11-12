@@ -1,0 +1,15 @@
+<resources>
+    <color name="brand">#CFBCFF</color>
+    <color name="on_brand">#381E72</color>
+    <color name="brand_container">#4B3F8C</color>
+    <color name="on_brand_container">#EADDFF</color>
+
+    <color name="bg">#121016</color>
+    <color name="surface">#1A1820</color>
+    <color name="surface_variant">#262430</color>
+    <color name="on_surface">#E7E1ED</color>
+    <color name="on_surface_variant">#C9C3D4</color>
+    <color name="outline">#49454F</color>
+
+    <color name="danger">#FFB4AB</color>
+</resources>

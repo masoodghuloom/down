@@ -40,7 +40,7 @@ class VideoGridAdapter(private val context: Context) : BaseAdapter() {
         if (cached != null) {
             thumb.setImageBitmap(cached)
         } else {
-            thumb.setImageResource(R.drawable.ic_stat_download)
+            thumb.setImageDrawable(null)
             Bg.run({ loadThumb(video) }) { bmp ->
                 if (bmp != null) {
                     cache.put(video.id, bmp)

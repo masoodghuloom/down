@@ -63,5 +63,7 @@ dependencies {
 
     // ffmpeg with a scriptable API, used to stitch photo-slideshow posts
     // (images + music) into a single video. Maintained, 16KB-page-ready fork.
-    implementation 'dev.ffmpegkit-maintained:ffmpeg-kit-min:8.1.9'
+    // -min-gpl adds the libx264 encoder, so edits/slideshows output H.264,
+    // which Android's player renders reliably (plain mpeg4 shows a black frame).
+    implementation 'dev.ffmpegkit-maintained:ffmpeg-kit-min-gpl:8.1.9'
 }

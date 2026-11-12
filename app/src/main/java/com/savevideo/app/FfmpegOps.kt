@@ -24,13 +24,13 @@ object FfmpegOps {
             else -> return false
         }
         val cmd = "-y -i ${q(input)} -vf \"$vf,format=yuv420p\" " +
-            "-c:v mpeg4 -q:v 4 -c:a copy -movflags +faststart ${q(out)}"
+            "-c:v libx264 -preset veryfast -crf 23 -c:a copy -movflags +faststart ${q(out)}"
         return run(cmd, out)
     }
 
     fun crop(input: File, x: Int, y: Int, w: Int, h: Int, out: File): Boolean {
         val cmd = "-y -i ${q(input)} -vf \"crop=$w:$h:$x:$y,format=yuv420p\" " +
-            "-c:v mpeg4 -q:v 4 -c:a copy -movflags +faststart ${q(out)}"
+            "-c:v libx264 -preset veryfast -crf 23 -c:a copy -movflags +faststart ${q(out)}"
         return run(cmd, out)
     }
 

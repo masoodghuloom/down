@@ -42,7 +42,7 @@ object SlideshowBuilder {
             append("-y -f concat -safe 0 -i ").append(quote(listFile.absolutePath))
             if (audio != null) append(" -i ").append(quote(audio.absolutePath))
             append(" -vf \"").append(vf).append("\"")
-            append(" -r 30 -c:v mpeg4 -q:v 4")
+            append(" -r 30 -c:v libx264 -preset veryfast -crf 23 -pix_fmt yuv420p")
             if (audio != null) append(" -c:a aac -b:a 192k -shortest")
             append(" -movflags +faststart ").append(quote(outFile.absolutePath))
         }
