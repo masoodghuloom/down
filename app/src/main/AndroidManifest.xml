@@ -47,5 +47,9 @@
             android:exported="false"
             android:foregroundServiceType="dataSync" />
 
+        <activity android:name=".VideoDetailActivity" android:exported="false" />
+        <activity android:name=".TrimActivity" android:exported="false" />
+        <activity android:name=".CropActivity" android:exported="false" />
+
     </application>
 </manifest>

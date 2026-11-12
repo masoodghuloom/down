@@ -251,47 +251,7 @@ class DownloadService : Service() {
     // ----- Save to the gallery ---------------------------------------------
 
     private fun saveToGallery(file: File) {
-        val name = uniqueName(file.name)
-        val mime = "video/mp4"
-        // DCIM is the folder Samsung Gallery reliably scans (Movies/ often isn't shown).
-        val album = "${Environment.DIRECTORY_DCIM}/SaveVideo"
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val values = ContentValues().apply {
-                put(MediaStore.Video.Media.DISPLAY_NAME, name)
-                put(MediaStore.Video.Media.MIME_TYPE, mime)
-                put(MediaStore.Video.Media.RELATIVE_PATH, album)
-                put(MediaStore.Video.Media.IS_PENDING, 1)
-            }
-            val uri: Uri = contentResolver.insert(
-                MediaStore.Video.Media.EXTERNAL_CONTENT_URI, values
-            ) ?: throw IllegalStateException("Could not create gallery entry")
-
-            contentResolver.openOutputStream(uri)!!.use { out ->
-                file.inputStream().use { it.copyTo(out) }
-            }
-            values.clear()
-            values.put(MediaStore.Video.Media.IS_PENDING, 0)
-            contentResolver.update(uri, values, null, null)
-        } else {
-            val outDir = File(
-                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DCIM),
-                "SaveVideo"
-            ).apply { mkdirs() }
-            val dest = File(outDir, name)
-            file.copyTo(dest, overwrite = true)
-            MediaScannerConnection.scanFile(this, arrayOf(dest.absolutePath), arrayOf(mime), null)
-        }
-    }
-
-    /** A collision-proof, gallery-friendly file name ending in .mp4. */
-    private fun uniqueName(original: String): String {
-        val base = original.substringBeforeLast('.', original)
-            .replace(Regex("[^A-Za-z0-9_-]"), "_")
-            .take(40)
-            .ifBlank { "video" }
-        val stamp = java.text.SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(java.util.Date())
-        return "SaveVideo_${stamp}_$base.mp4"
+        Gallery.save(this, file)
     }
 
     // ----- Notifications ----------------------------------------------------
